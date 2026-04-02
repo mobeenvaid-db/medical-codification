@@ -1,0 +1,19 @@
+command:
+  - "python"
+  - "-m"
+  - "uvicorn"
+  - "app:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8000"
+env:
+  - name: DATA_MODE
+    description: "lakebase or warehouse — determines data source"
+    value: "lakebase"
+  - name: CATALOG
+    description: "Unity Catalog name"
+    value: "mv_catalog"
+  - name: WAREHOUSE_ID
+    description: "SQL Warehouse ID (required if DATA_MODE=warehouse)"
+    value: ""

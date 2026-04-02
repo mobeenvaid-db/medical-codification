@@ -10,7 +10,7 @@ The hard part isn't extraction — it's **codification specificity**. For a lab 
 Traditional approaches use either:
 
 * **Manual coding** — Certified coders review each chart individually. Doesn't scale beyond thousands of charts.  
-* **Licensed NLP platforms** (e.g., John Snow Labs) — Per-node annual licensing that scales with infrastructure cost, not value delivered. Black-box resolvers that can't be tuned for specific chart types.
+* **Licensed NLP platforms** — Per-node annual licensing that scales with infrastructure cost, not value delivered. Black-box resolvers that can't be tuned for specific chart types.
 
 This solution replaces both with an **AI-first, multi-pass codification pipeline** built entirely on Databricks — no external licensing, full transparency, and costs that scale with compute usage only.  
 ———

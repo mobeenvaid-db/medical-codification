@@ -212,7 +212,7 @@ async def icd10_extended():
 
     resolution = await db.fetch("""
         SELECT resolution_path, COUNT(*) AS count,
-               ROUND(AVG(confidence), 3) AS avg_confidence
+               ROUND(CAST(AVG(confidence) AS numeric), 3) AS avg_confidence
         FROM icd10_mappings
         GROUP BY resolution_path
         ORDER BY count DESC
@@ -313,7 +313,7 @@ async def loinc_extended():
 
     resolution = await db.fetch("""
         SELECT resolution_path, COUNT(*) AS count,
-               ROUND(AVG(confidence), 3) AS avg_confidence
+               ROUND(CAST(AVG(confidence) AS numeric), 3) AS avg_confidence
         FROM loinc_mappings
         GROUP BY resolution_path
         ORDER BY count DESC

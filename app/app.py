@@ -25,6 +25,7 @@ from server.routes.codification import router as codification_router
 from server.routes.pipeline import router as pipeline_router
 from server.routes.review import router as review_router
 from server.routes.analytics_extra import router as analytics_extra_router
+from server.routes.v2_analytics import router as v2_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -81,6 +82,7 @@ app.include_router(pipeline_router)
 app.include_router(review_router)
 app.include_router(codification_router)
 app.include_router(analytics_extra_router)
+app.include_router(v2_router)
 
 
 @app.get("/api/health")

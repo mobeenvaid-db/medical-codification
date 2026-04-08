@@ -44,7 +44,7 @@ async def icd10_analytics():
             im.icd10_code AS code,
             ic.display_name AS description,
             COUNT(*) AS count,
-            ROUND(AVG(im.confidence), 3) AS avg_confidence
+            ROUND(CAST(AVG(im.confidence) AS numeric), 3) AS avg_confidence
         FROM icd10_mappings im
         LEFT JOIN icd10_codes ic ON ic.code = im.icd10_code
         GROUP BY im.icd10_code, ic.display_name
@@ -112,7 +112,7 @@ async def loinc_analytics():
             lc.display_name AS description,
             lc.component,
             COUNT(*) AS count,
-            ROUND(AVG(lm.confidence), 3) AS avg_confidence
+            ROUND(CAST(AVG(lm.confidence) AS numeric), 3) AS avg_confidence
         FROM loinc_mappings lm
         LEFT JOIN loinc_codes lc ON lc.code = lm.loinc_code
         GROUP BY lm.loinc_code, lc.display_name, lc.component
@@ -148,7 +148,7 @@ async def loinc_analytics():
             COALESCE(lc.method, lm.method, '') AS method,
             COALESCE(lc.system, lm.specimen_type, '') AS specimen,
             COUNT(*) AS occurrences,
-            ROUND(AVG(lm.confidence), 3) AS avg_confidence,
+            ROUND(CAST(AVG(lm.confidence) AS numeric), 3) AS avg_confidence,
             MIN(lm.confidence) AS min_confidence,
             MAX(lm.confidence) AS max_confidence
         FROM loinc_mappings lm

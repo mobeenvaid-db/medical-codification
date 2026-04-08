@@ -50,7 +50,10 @@ def _parse_statement_response(resp_json: dict) -> List[Dict[str, Any]]:
         raise RuntimeError(f"SQL Statement failed: {error.get('message', resp_json)}")
 
     result = resp_json.get("result", {}) or {}
+    # Columns can be in result.columns OR manifest.schema.columns depending on API version
     columns = result.get("columns", [])
+    if not columns:
+        columns = resp_json.get("manifest", {}).get("schema", {}).get("columns", [])
     data_array = result.get("data_array", [])
 
     if not columns or not data_array:
@@ -401,6 +404,43 @@ class DualModeDB:
             return await self._warehouse.execute(query, *args)
         logger.debug("Demo mode - returning empty status for execute")
         return ""
+
+    # -- Delta read (always via SQL Statement API) ---------------------------
+
+    async def fetch_delta(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Query Delta Lake tables directly via SQL Statement API.
+
+        Use this for v2 pipeline tables that only exist in Delta (not in Lakebase).
+        In Warehouse mode this is the same as fetch().
+        In Lakebase mode this uses the delta_writer client for reads.
+        """
+        if self._mode == "warehouse" and self._warehouse:
+            rows = await self._warehouse.fetch(query)
+            logger.info("fetch_delta (warehouse): %d rows returned", len(rows))
+            return rows
+        elif self._mode == "lakebase" and self._delta_writer:
+            # Log raw response for debugging
+            statement, _ = _pg_to_positional(query, ())
+            raw_resp = await self._delta_writer._execute_statement(statement)
+            status = raw_resp.get("status", {}).get("state", "UNKNOWN")
+            result = raw_resp.get("result", {}) or {}
+            cols = result.get("columns", [])
+            data = result.get("data_array", [])
+            manifest = raw_resp.get("manifest", {})
+            total_rows = manifest.get("total_row_count", "?")
+            logger.info("fetch_delta RAW: status=%s, columns=%d, data_rows=%d, manifest_rows=%s, query=%.80s",
+                       status, len(cols), len(data), total_rows, query.strip())
+            if status == "FAILED":
+                error = raw_resp.get("status", {}).get("error", {})
+                logger.error("fetch_delta FAILED: %s", error.get("message", raw_resp))
+            rows = _parse_statement_response(raw_resp)
+            logger.info("fetch_delta (delta_writer): %d rows parsed", len(rows))
+            return rows
+        else:
+            logger.warning("fetch_delta called but no Delta client available (mode=%s, warehouse_id=%s)",
+                          self._mode, WAREHOUSE_ID)
+            return []
 
     # -- Delta write (always via SQL Statement API) --------------------------
 

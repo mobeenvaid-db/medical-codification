@@ -50,8 +50,8 @@ def _build_where(code_type: Optional[str], status: str) -> tuple[str, list]:
     if status and status.lower() != "all":
         status_map = {
             "pending": ["DISPUTED_UNRESOLVED"],
-            "approved": ["R1_R2_AGREE"],
-            "corrected": ["ARBITER_CHOSE_R1", "ARBITER_CHOSE_R2"],
+            "approved": ["R1_R2_AGREE", "ONTOLOGY_DIRECT"],
+            "corrected": ["ARBITER_CHOSE_R1", "ARBITER_CHOSE_R2", "LLM_ASSIGNED"],
         }
         paths = status_map.get(status.lower(), [status])
         in_list = ", ".join(f"'{p}'" for p in paths)
@@ -107,6 +107,8 @@ async def review_queue(
                 CASE
                     WHEN im.resolution_path = 'DISPUTED_UNRESOLVED' THEN 'pending'
                     WHEN im.resolution_path IN ('HUMAN_ACCEPTED', 'HUMAN_OVERRIDE') THEN 'reviewed'
+                    WHEN im.resolution_path = 'ONTOLOGY_DIRECT' THEN 'auto_resolved'
+                    WHEN im.resolution_path = 'LLM_ASSIGNED' THEN 'auto_resolved'
                     ELSE 'auto_resolved'
                 END AS status,
                 SUBSTRING(c.raw_text, 1, 500) AS chart_preview
@@ -161,6 +163,40 @@ async def review_queue(
             + (SELECT COUNT(*) FROM loinc_mappings WHERE resolution_path = 'DISPUTED_UNRESOLVED') AS unresolved
     """)
     counts = counts_row if counts_row else {"agreed": 0, "arbitrated": 0, "unresolved": 0}
+
+    # -- v2: Batch-fetch assertion and source info for returned entity_ids ---
+    v2_assertions = {}
+    v2_sources = {}
+    entity_ids = list({r.get("entity_id") for r in rows if r.get("entity_id")})
+    if entity_ids:
+        # Assertion info
+        try:
+            id_list = ", ".join(f"'{eid}'" for eid in entity_ids)
+            assertion_rows = await db.fetch_delta(
+                f"""SELECT entity_id, assertion_status, negation_detected
+                    FROM {CATALOG}.extracted.entity_assertions
+                    WHERE entity_id IN ({id_list})"""
+            )
+            for ar in assertion_rows:
+                v2_assertions[ar["entity_id"]] = {
+                    "assertion_status": ar.get("assertion_status"),
+                    "negation_detected": ar.get("negation_detected"),
+                }
+        except Exception:
+            pass
+
+        # Source info
+        try:
+            id_list = ", ".join(f"'{eid}'" for eid in entity_ids)
+            source_rows = await db.fetch_delta(
+                f"""SELECT entity_id, sources
+                    FROM {CATALOG}.extracted.merged_entities
+                    WHERE entity_id IN ({id_list})"""
+            )
+            for sr in source_rows:
+                v2_sources[sr["entity_id"]] = sr.get("sources")
+        except Exception:
+            pass
 
     # Enrich rows
     enriched = []
@@ -233,6 +269,16 @@ async def review_queue(
                 "timestamp": str(r.get("created_at", ""))[:19],
             })
 
+        # v2 assertion and source enrichment
+        eid = r.get("entity_id")
+        if eid and eid in v2_assertions:
+            r["assertion_status"] = v2_assertions[eid].get("assertion_status")
+            r["negation_detected"] = v2_assertions[eid].get("negation_detected")
+        else:
+            r["assertion_status"] = None
+            r["negation_detected"] = None
+        r["sources"] = v2_sources.get(eid) if eid else None
+
         r["audit_trail"] = trail
         enriched.append(r)
 
@@ -258,7 +304,7 @@ async def review_stats():
             SUM(CASE WHEN resolution_path = 'R1_R2_AGREE' THEN 1 ELSE 0 END) AS agreed,
             SUM(CASE WHEN resolution_path LIKE 'ARBITER%' THEN 1 ELSE 0 END) AS arbitrated,
             SUM(CASE WHEN resolution_path = 'DISPUTED_UNRESOLVED' THEN 1 ELSE 0 END) AS unresolved,
-            ROUND(AVG(confidence), 3) AS avg_confidence
+            ROUND(CAST(AVG(confidence) AS numeric), 3) AS avg_confidence
         FROM icd10_mappings
     """)
 
@@ -268,7 +314,7 @@ async def review_stats():
             SUM(CASE WHEN resolution_path = 'R1_R2_AGREE' THEN 1 ELSE 0 END) AS agreed,
             SUM(CASE WHEN resolution_path LIKE 'ARBITER%' THEN 1 ELSE 0 END) AS arbitrated,
             SUM(CASE WHEN resolution_path = 'DISPUTED_UNRESOLVED' THEN 1 ELSE 0 END) AS unresolved,
-            ROUND(AVG(confidence), 3) AS avg_confidence
+            ROUND(CAST(AVG(confidence) AS numeric), 3) AS avg_confidence
         FROM loinc_mappings
     """)
 
@@ -391,11 +437,24 @@ async def decide(review_id: int, body: dict):
         )
 
     # 2. ALWAYS write to Delta feedback.human_corrections (source of truth)
-    final_code_sql = f"'{final_code}'" if final_code else "NULL"
+    # v2 schema: correction_id, mapping_id, code_type, original_code,
+    #   corrected_code, entity_text, entity_context, corrected_by, corrected_at
+    code_type = body.get("code_type", "")
+    original_code = body.get("original_code", "")
+    entity_text = body.get("entity_text", "")
+    entity_context = body.get("entity_context", "")
+    code_type_escaped = code_type.replace("'", "''")
+    original_code_escaped = original_code.replace("'", "''")
+    entity_text_escaped = entity_text.replace("'", "''")
+    entity_context_escaped = entity_context.replace("'", "''")
+    corrected_code_sql = f"'{override_escaped}'" if (decision == "override" and override_code) else "NULL"
     delta_stmt = (
         f"INSERT INTO {CATALOG}.feedback.human_corrections "
-        f"(mapping_id, decision, override_code, reviewer, reviewed_at) "
-        f"VALUES ({review_id}, '{decision}', {final_code_sql}, '{reviewer_escaped}', current_timestamp())"
+        f"(correction_id, mapping_id, code_type, original_code, corrected_code, "
+        f"entity_text, entity_context, corrected_by, corrected_at) "
+        f"VALUES (uuid(), '{review_id}', '{code_type_escaped}', '{original_code_escaped}', "
+        f"{corrected_code_sql}, '{entity_text_escaped}', '{entity_context_escaped}', "
+        f"'{reviewer_escaped}', current_timestamp())"
     )
     try:
         await db.write_to_delta(delta_stmt)

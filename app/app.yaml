@@ -15,5 +15,5 @@ env:
     description: "Unity Catalog name"
     value: "mv_catalog"
   - name: WAREHOUSE_ID
-    description: "SQL Warehouse ID (required if DATA_MODE=warehouse)"
-    value: ""
+    description: "SQL Warehouse ID for Delta table reads (v2 pipeline)"
+    value: "**your SQL Warehouse ID**"
